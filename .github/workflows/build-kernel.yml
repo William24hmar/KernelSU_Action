@@ -202,10 +202,24 @@ jobs:
     - name: Setup Configuration for Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        sed -i 's/# CONFIG_WLAN_VENDOR_ADMTEK is not set/CONFIG_WLAN_VENDOR_ADMTEK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_ATH is not set/CONFIG_WLAN_VENDOR_ATH=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_ATMEL is not set/CONFIG_WLAN_VENDOR_ATMEL=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_BROADCOM is not set/CONFIG_WLAN_VENDOR_BROADCOM=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_CISCO is not set/CONFIG_WLAN_VENDOR_CISCO=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_INTEL is not set/CONFIG_WLAN_VENDOR_INTEL=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_INTERSIL is not set/CONFIG_WLAN_VENDOR_INTERSIL=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_MARVELL is not set/CONFIG_WLAN_VENDOR_MARVELL=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_MEDIATEK is not set/CONFIG_WLAN_VENDOR_MEDIATEK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_RALINK is not set/CONFIG_WLAN_VENDOR_RALINK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_REALTEK is not set/CONFIG_WLAN_VENDOR_REALTEK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_RSI is not set/CONFIG_WLAN_VENDOR_RSI=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_ST is not set/CONFIG_WLAN_VENDOR_ST=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_TI is not set/CONFIG_WLAN_VENDOR_TI=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_ZYDAS is not set/CONFIG_WLAN_VENDOR_ZYDAS=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_VENDOR_QUANTENNA is not set/CONFIG_WLAN_VENDOR_QUANTENNA=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/CONFIG_QCA_CLD_WLAN=m/CONFIG_QCA_CLD_WLAN=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        sed -i 's/CONFIG_MODULE_UNLOAD=y/CONFIG_MODULE_UNLOAD=m/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_MODULE_FORCE_LOAD=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_LTO_NONE=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        
         if [ ${{ env.APPLY_KSU_PATCH }} = true ]; then
             bash $GITHUB_WORKSPACE/patches/patches.sh
             if grep -q "CONFIG_KSU" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
@@ -251,11 +265,11 @@ jobs:
           export KSU_EXPECTED_SIZE=${{ env.KSU_EXPECTED_SIZE }}
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
-        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
+        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
-            make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
+            make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
         else
-            make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
+            make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
         fi
 
     - name: Check a kernel output files
