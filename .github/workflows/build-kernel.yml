@@ -203,6 +203,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         sed -i 's/CONFIG_QCA_CLD_WLAN=m/CONFIG_QCA_CLD_WLAN=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/CONFIG_MODULE_UNLOAD=y/CONFIG_MODULE_UNLOAD=m/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "CONFIG_LTO_NONE=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         if [ ${{ env.APPLY_KSU_PATCH }} = true ]; then
             bash $GITHUB_WORKSPACE/patches/patches.sh
