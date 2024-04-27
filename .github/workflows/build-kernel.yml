@@ -202,6 +202,7 @@ jobs:
     - name: Setup Configuration for Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        sed -i 's/# CONFIG_WIRELESS_WDS is not set/CONFIG_WIRELESS_WDS=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/# CONFIG_WLAN_VENDOR_ADMTEK is not set/CONFIG_WLAN_VENDOR_ADMTEK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/# CONFIG_WLAN_VENDOR_ATH is not set/CONFIG_WLAN_VENDOR_ATH=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/# CONFIG_WLAN_VENDOR_ATMEL is not set/CONFIG_WLAN_VENDOR_ATMEL=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
