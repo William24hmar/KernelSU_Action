@@ -219,6 +219,8 @@ jobs:
         sed -i 's/# CONFIG_WLAN_VENDOR_TI is not set/CONFIG_WLAN_VENDOR_TI=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/# CONFIG_WLAN_VENDOR_ZYDAS is not set/CONFIG_WLAN_VENDOR_ZYDAS=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         sed -i 's/# CONFIG_WLAN_VENDOR_QUANTENNA is not set/CONFIG_WLAN_VENDOR_QUANTENNA=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_VIRT_WIFI is not set/CONFIG_VIRT_WIFI=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/# CONFIG_WLAN_FEATURE_RX_WAKELOCK is not set/CONFIG_WLAN_FEATURE_RX_WAKELOCK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         
         if [ ${{ env.APPLY_KSU_PATCH }} = true ]; then
             bash $GITHUB_WORKSPACE/patches/patches.sh
