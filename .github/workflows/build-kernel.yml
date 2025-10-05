@@ -216,10 +216,28 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "Setting up KernelSU with tag: ${{ env.KERNELSU_TAG }}"
         rm -rf KernelSU drivers/kernelsu
+        
+        # Download and run setup script
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+        
+        # Verify KernelSU was set up correctly
+        if [ ! -d "KernelSU" ] || [ ! -d "drivers/kernelsu" ]; then
+            echo "ERROR: KernelSU setup failed!"
+            echo "KernelSU directory exists: $([ -d KernelSU ] && echo yes || echo no)"
+            echo "drivers/kernelsu exists: $([ -d drivers/kernelsu ] && echo yes || echo no)"
+            exit 1
+        fi
+        
+        echo "KernelSU setup successful"
+        ls -la KernelSU/
+        ls -la drivers/kernelsu/
+        
+        # Calculate KernelSU version
         KSU_VERSION=$(cd KernelSU && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
+        echo "KernelSU version: $KSU_VERSION"
 
     - name: Setup Configuration for Kernel
       run: |
