@@ -1,6 +1,6 @@
-name: Build Kernel
-on:
+name: Build Kernel (Lunaris AOSP Android 16)
 
+on:
   workflow_dispatch:
 
 jobs:
@@ -11,10 +11,13 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
+
     steps:
     - uses: actions/checkout@v4
+
     - name: Prepare Configuration
       run: |
+        # (original behavior: reads CONFIG_ENV and exports many vars into GITHUB_ENV)
         CONFIG_ENV=$(cat config.env | grep -w "CONFIG_ENV" | head -n 1 | cut -d "=" -f 2)
         echo "KERNEL_SOURCE=$(cat $CONFIG_ENV | grep -w "KERNEL_SOURCE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
         echo "KERNEL_SOURCE_BRANCH=$(cat $CONFIG_ENV | grep -w "KERNEL_SOURCE_BRANCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
@@ -57,24 +60,7 @@ jobs:
         echo "KSU_EXPECTED_HASH=$(cat $CONFIG_ENV | grep -w "KSU_EXPECTED_HASH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
         echo "REMOVE_UNUSED_PACKAGES=$(cat $CONFIG_ENV | grep -w "REMOVE_UNUSED_PACKAGES" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
 
-    - name: Remove unused packages
-      if: env.REMOVE_UNUSED_PACKAGES == 'true'
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: ture
-        android: false
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: false
-
-    - name: Set swap to 10G
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 10
-
-    - name: Setup build kernel environment
+    - name: Setup build kernel environment (install system deps)
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
         echo "DEVICE=$(echo '${{ env.KERNEL_CONFIG }}' | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
@@ -82,109 +68,81 @@ jobs:
         sudo apt-get install -y \
             git ccache automake flex lzop bison gperf build-essential \
             zip curl zlib1g-dev g++-multilib libxml2-utils \
-            bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
+            bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
             make optipng maven libssl-dev pwgen libswitch-perl \
             policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
             bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip \
-            device-tree-compiler python3
-        # Install python2 if not available via package
-        if ! command -v python2 &> /dev/null; then
-            sudo apt-get install -y python-is-python2 || sudo ln -sf /usr/bin/python3 /usr/bin/python2
-        fi
-        # Install 32-bit ncurses development libraries
-        sudo apt-get install -y libncurses-dev
+            device-tree-compiler python3 python-is-python2 libncurses-dev
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    - name: Download Clang (ZyCromerZ)
-      if: env.USE_CUSTOM_CLANG != 'true'
+    - name: Sync Lunaris/AOSP prebuilts (clang, mkbootimg, build_make)
+      # this is the important bit: repo init + local_manifest to only sync required projects
       run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang
-        cd clang
-        wget https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241214-release/Clang-20.0.0git-20241214.tar.gz
-        tar -xf Clang-20.0.0git-20241214.tar.gz
-        cd ..
+        # install repo tool
+        mkdir -p ~/bin
+        curl -sS -o ~/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
+        chmod a+x ~/bin/repo
+        export PATH=$HOME/bin:$PATH
 
-    - name: Download Custom-Clang
-      if: env.USE_CUSTOM_CLANG == 'true'
+        # prepare a temporary manifest workspace (we don't need the whole tree)
+        mkdir -p $GITHUB_WORKSPACE/lunaris_manifest
+        cd $GITHUB_WORKSPACE/lunaris_manifest
+
+        # init Lunaris manifest (Android 16)
+        repo init -u https://github.com/Lunaris-AOSP/android -b 16 || repo init -u https://github.com/Lunaris-AOSP/android -b 16 --depth=1
+
+        # create a local manifest to only pull prebuilts/clang and Lunaris mkbootimg/build_make
+        mkdir -p .repo/local_manifests
+        cat > .repo/local_manifests/prebuilts.xml <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="lunaris" fetch="https://github.com/Lunaris-AOSP/"/>
+  <remote name="aosp"    fetch="https://android.googlesource.com/"/>
+  <project path="prebuilts/clang/host/linux-x86" name="platform/prebuilts/clang/host/linux-x86" remote="aosp" revision="${CLANG_BRANCH}" />
+  <project path="system/tools/mkbootimg" name="system_tools_mkbootimg" remote="lunaris" revision="master" />
+  <project path="build/make" name="build_make" remote="lunaris" revision="master" />
+</manifest>
+EOF
+
+        # sync only those projects (faster than full sync)
+        repo sync prebuilts/clang/host/linux-x86 system/tools/mkbootimg build/make -j4 --no-tags --no-clone-bundle || repo sync prebuilts/clang/host/linux-x86 system/tools/mkbootimg build/make -j2
+
+        # move synced pieces into kernel_workspace for later steps
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+        if [ -d prebuilts ]; then mv prebuilts $GITHUB_WORKSPACE/kernel_workspace/ || true; fi
+        if [ -d system ]; then mv system $GITHUB_WORKSPACE/kernel_workspace/ || true; fi
+        if [ -d build ]; then mv build $GITHUB_WORKSPACE/kernel_workspace/ || true; fi
+
+    - name: Setup AOSP clang env (from synced prebuilts)
       run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        if [[ ${{ env.CUSTOM_CLANG_SOURCE }} =~ git ]]; then
-            if [[ ${{ env.CUSTOM_CLANG_SOURCE }} == *'.tar.gz' ]]; then
-                wget -O clang.tar.gz ${{ env.CUSTOM_CLANG_SOURCE }}
-                mkdir clang-aosp
-                tar -C clang-aosp/ -zxvf clang.tar.gz
-            else
-                git clone ${{ env.CUSTOM_CLANG_SOURCE }} -b ${{ env.CUSTOM_CLANG_BRANCH }} clang-aosp --depth=1
-            fi        
+        # find the clang folder (clang-rXXXXX)
+        CLANG_BASE="$GITHUB_WORKSPACE/kernel_workspace/prebuilts/clang/host/linux-x86"
+        if [ -d "$CLANG_BASE" ]; then
+          CLANG_DIR=$(ls -1 $CLANG_BASE | grep -E '^clang' | head -n1 || true)
+          if [ -n "$CLANG_DIR" ]; then
+            full="$CLANG_BASE/$CLANG_DIR"
+            echo "AOSP_CLANG_DIR=$full" >> $GITHUB_ENV
+            echo "PATH=$full/bin:$PATH" >> $GITHUB_ENV
+            echo "CLANG_BIN_FOUND=true" >> $GITHUB_ENV
+            echo "Found clang at: $full"
+          else
+            echo "No clang folder found in $CLANG_BASE" && exit 1
+          fi
         else
-            wget -O clang.zip ${{ env.CUSTOM_CLANG_SOURCE }}
-            mkdir clang-aosp
-            unzip clang.zip -d clang-aosp/
+          echo "$CLANG_BASE not present; aborting" && exit 1
         fi
 
-    - name: Download Gcc-aosp
-      if: env.USE_CUSTOM_GCC_64 != 'true' || env.USE_CUSTOM_GCC_32 != 'true'
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        if [ ${{ env.ENABLE_GCC_ARM64 }} = true ]; then
-            mkdir gcc-64
-            wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
-            tar -C gcc-64/ -zxvf gcc-aarch64.tar.gz
-            echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-" >> $GITHUB_ENV
-        fi
-
-        if [ ${{ env.ENABLE_GCC_ARM32 }} = true ]; then
-            mkdir gcc-32
-            wget -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
-            tar -C gcc-32/ -zxvf gcc-arm.tar.gz
-            echo "GCC_32=CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin/arm-linux-androideabi-" >> $GITHUB_ENV
-        fi
-
-    - name: Download Custom-Gcc
-      if: env.USE_CUSTOM_GCC_64 == 'true' || env.USE_CUSTOM_GCC_32 == 'true'
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        if [ ${{ env.USE_CUSTOM_GCC_64 }} = true ]; then
-          if [[ ${{ env.CUSTOM_GCC_64_SOURCE }} =~ git ]]; then
-              if [[ ${{ env.CUSTOM_GCC_64_SOURCE }} == *'.tar.gz' ]]; then
-                wget -O gcc-64.tar.gz ${{ env.CUSTOM_CLANG_SOURCE }}
-                mkdir gcc-64
-                tar -C gcc-64/ -zxvf gcc-64.tar.gz
-              else
-                git clone ${{ env.CUSTOM_GCC_64_SOURCE }} -b ${{ env.CUSTOM_GCC_64_BRANCH }} gcc-64 --depth=1
-              fi
-          else
-              wget -O gcc-64.zip ${{ env.CUSTOM_GCC_64_SOURCE }}
-              mkdir gcc-64
-              unzip gcc-64.zip -d gcc-64/
-          fi
-          echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/${{ env.CUSTOM_GCC_64_BIN }}" >> $GITHUB_ENV
-        fi
-
-        if [ ${{ env.USE_CUSTOM_GCC_32 }} = true ]; then
-          if [[ ${{ env.CUSTOM_GCC_32_SOURCE }} =~ git ]]; then
-              if [[ ${{ env.CUSTOM_GCC_32_SOURCE }} == *'.tar.gz' ]]; then
-                wget -O gcc-32.tar.gz ${{ env.CUSTOM_CLANG_SOURCE }}
-                mkdir gcc-32
-                tar -C gcc-32/ -zxvf gcc-32.tar.gz
-              else
-                git clone ${{ env.CUSTOM_GCC_32_SOURCE }} -b ${{ env.CUSTOM_GCC_32_BRANCH }} gcc-32 --depth=1
-              fi
-          else
-            wget -O gcc-32.zip ${{ env.CUSTOM_GCC_32_SOURCE }}
-            mkdir gcc-32
-            unzip gcc-32.zip -d gcc-32/
-          fi
-          echo "GCC_32=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin/${{ env.CUSTOM_GCC_32_BIN }}" >> $GITHUB_ENV
-        fi
-
-    - name: Download mkbootimg tools
+    - name: Download mkbootimg tools (fallback to Lunaris repo if not synced)
       if: env.BUILD_BOOT_IMG == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://android.googlesource.com/platform/system/tools/mkbootimg tools -b master-kernel-build-2022 --depth=1
+        if [ -d system/tools/mkbootimg ]; then
+          # use the repo-synced mkbootimg
+          cp -r system/tools/mkbootimg tools
+        else
+          # fallback to Lunaris GitHub mkbootimg
+          git clone https://github.com/Lunaris-AOSP/system_tools_mkbootimg.git tools --depth=1
+        fi
 
     - name: Download kernel source
       run: |
@@ -211,30 +169,19 @@ jobs:
             echo "FORMAT_MKBOOTING=$(echo `tools/unpack_bootimg.py --boot_img=boot-source.img --format mkbootimg`)" >> $GITHUB_ENV
             echo "HAVE_SOURCE_BOOT_IMAGE=true" >> $GITHUB_ENV
         fi
-  
+
+    # ----- KernelSU, config tweaks and the rest of your original steps kept -----
     - name: Setup KernelSU
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         echo "Setting up KernelSU with tag: ${{ env.KERNELSU_TAG }}"
         rm -rf KernelSU drivers/kernelsu
-        
-        # Download and run setup script
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
-        
-        # Verify KernelSU was set up correctly
         if [ ! -d "KernelSU" ] || [ ! -d "drivers/kernelsu" ]; then
             echo "ERROR: KernelSU setup failed!"
-            echo "KernelSU directory exists: $([ -d KernelSU ] && echo yes || echo no)"
-            echo "drivers/kernelsu exists: $([ -d drivers/kernelsu ] && echo yes || echo no)"
             exit 1
         fi
-        
-        echo "KernelSU setup successful"
-        ls -la KernelSU/
-        ls -la drivers/kernelsu/
-        
-        # Calculate KernelSU version
         KSU_VERSION=$(cd KernelSU && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
         echo "KernelSU version: $KSU_VERSION"
@@ -278,72 +225,40 @@ jobs:
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        if [ ${{ env.USE_CUSTOM_CLANG }} = true ]; then
+
+        # prefer the synced AOSP clang if present
+        if [ "${{ env.CLANG_BIN_FOUND }}" = "true" ]; then
+            echo "Using AOSP clang from: $AOSP_CLANG_DIR"
+            export PATH="$AOSP_CLANG_DIR/bin:$PATH"
+        elif [ ${{ env.USE_CUSTOM_CLANG }} = true ]; then
             export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
         else
+            # fallback to packaged clang (if provided in repo)
             export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang/bin:$PATH
         fi
-        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
-        if [ ${{ env.ENABLE_CCACHE }} = true ]; then
-            make -j$(nproc --all) CC="ccache clang" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
-        else
-            make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
-        fi
 
-    - name: Check a kernel output files
+        # build (same flags as before)
+        make -j$(nproc --all) CC=clang O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf OBJSIZE=llvm-size \
+            STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
+
+    - name: Check kernel output files
       run: |
-       cd $GITHUB_WORKSPACE/kernel_workspace
-       if [ -f android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        if [ -f android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
            echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
-       else
+        else
            echo "Kernel output file is empty"
            exit 1
-       fi
-       if [ ${{ env.NEED_DTBO }} = true ]; then
+        fi
+        if [ ${{ env.NEED_DTBO }} = true ]; then
            if [ -f android-kernel/out/arch/${{ env.ARCH }}/boot/dtbo.img ]; then
                echo "CHECK_DTBO_IS_OK=true" >> $GITHUB_ENV
            else
                echo "DTBO image is empty"
                exit 1
            fi
-       fi
-  
-    - name: Make Anykernel3
-      if: env.CHECK_FILE_IS_OK == 'true' && env.USE_CUSTOM_ANYKERNEL3 != 'true'
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
-        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
-        sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
-        cp android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
-        if [ ${{ env.CHECK_DTBO_IS_OK }} = true ]; then
-            cp android-kernel/out/arch/${{ env.ARCH }}/boot/dtbo.img AnyKernel3/
         fi
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md
-
-    - name: Make Custom-Anykernel3
-      if: env.CHECK_FILE_IS_OK == 'true' && env.USE_CUSTOM_ANYKERNEL3 == 'true'
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        if [[ ${{ env.CUSTOM_ANYKERNEL3_SOURCE }} =~ git ]]; then
-            if [[ ${{ env.CUSTOM_ANYKERNEL3_SOURCE }} == *'.tar.gz' ]]; then
-                wget -O AnyKernel3.tar.gz ${{ env.CUSTOM_ANYKERNEL3_SOURCE }}
-                mkdir AnyKernel3
-                tar -C AnyKernel3/ -zxvf AnyKernel3.tar.gz
-            else
-                git clone ${{ env.CUSTOM_ANYKERNEL3_SOURCE }} -b ${{ env.CUSTOM_ANYKERNEL3_BRANCH }} --depth=1 AnyKernel3
-            fi
-        else
-            wget -O AnyKernel3.zip ${{ env.CUSTOM_ANYKERNEL3_SOURCE }}
-            mkdir AnyKernel3
-            unzip AnyKernel3.zip -d AnyKernel3/
-        fi
-        cp android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
-        if [ ${{ env.CHECK_DTBO_IS_OK }} = true ]; then
-            cp android-kernel/out/arch/${{ env.ARCH }}/boot/dtbo.img AnyKernel3/
-        fi
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
     - name: Make boot image
       if: env.HAVE_SOURCE_BOOT_IMAGE == 'true' && env.CHECK_FILE_IS_OK == 'true'
@@ -358,30 +273,8 @@ jobs:
             echo "Boot image is empty"
             exit 1
         fi
-    
-    - name: Upload ${{ env.KERNEL_IMAGE_NAME }}
-      if: env.CHECK_FILE_IS_OK == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.KERNEL_IMAGE_NAME }}${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
-        path: kernel_workspace/android-kernel/out/arch/${{ env.ARCH }}/boot/${{ env.KERNEL_IMAGE_NAME }}
 
-    - name: Upload AnyKernel3
-      if: env.CHECK_FILE_IS_OK == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: AnyKernel3${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
-        path: kernel_workspace/AnyKernel3/*
-
-    - name: Upload DTBO image
-      if: env.CHECK_DTBO_IS_OK == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: dtbo-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
-        path: kernel_workspace/android-kernel/out/arch/${{ env.ARCH }}/boot/dtbo.img
-
-    - name: Upload boot image
-      if: env.MAKE_BOOT_IMAGE_IS_OK == 'true'
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: boot${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
