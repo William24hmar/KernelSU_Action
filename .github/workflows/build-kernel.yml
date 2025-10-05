@@ -268,50 +268,6 @@ jobs:
             echo "CONFIG_CC_WERROR=n" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         fi
 
-    - name: Verify KernelSU Setup (Diagnostic)
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Checking if KernelSU directory exists ==="
-        if [ -d "KernelSU" ]; then
-            echo "✓ KernelSU directory found"
-            ls -la KernelSU/
-        else
-            echo "✗ KernelSU directory NOT found!"
-        fi
-        
-        echo ""
-        echo "=== Checking if drivers/kernelsu exists ==="
-        if [ -d "drivers/kernelsu" ]; then
-            echo "✓ drivers/kernelsu found"
-            ls -la drivers/kernelsu/
-        else
-            echo "✗ drivers/kernelsu NOT found!"
-        fi
-        
-        echo ""
-        echo "=== Checking CONFIG_KSU in defconfig ==="
-        if grep -q "CONFIG_KSU=y" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
-            echo "✓ CONFIG_KSU=y is set"
-        else
-            echo "✗ CONFIG_KSU=y is NOT set!"
-            echo "Defconfig contents:"
-            grep -i ksu arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }} || echo "No KSU config found"
-        fi
-        
-        echo ""
-        echo "=== Checking if patches were applied ==="
-        if grep -q "ksu_input_hook" drivers/input/input.c; then
-            echo "✓ KernelSU patches applied to input.c"
-        else
-            echo "✗ KernelSU patches NOT applied to input.c"
-        fi
-        
-        if grep -q "ksu_execveat_hook" fs/exec.c; then
-            echo "✓ KernelSU patches applied to exec.c"
-        else
-            echo "✗ KernelSU patches NOT applied to exec.c"
-        fi
-
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
       uses: hendrikmuhs/ccache-action@v1.2
