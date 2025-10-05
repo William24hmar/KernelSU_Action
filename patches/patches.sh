@@ -74,3 +74,41 @@ for i in "${patch_files[@]}"; do
     esac
 
 done
+
+echo "KernelSU patches applied successfully"
+
+# Additional patch: Fix nl80211hdr_put symbol conflict
+# This fixes duplicate symbol errors between QCACLD WiFi driver and mainline nl80211
+echo ""
+echo "Applying nl80211hdr_put symbol conflict fix..."
+
+QCACLD_PATHS=(
+    "drivers/staging/qca-wifi-host-cmn/utils/nlink/src/wlan_nlink_srv.c"
+    "drivers/staging/qca-wifi-host-cmn/utils/nlink/inc/wlan_nlink_srv.h"
+    "drivers/staging/qcacld-3.0/components/nlink/src/wlan_nlink_srv.c"
+    "drivers/staging/qcacld-3.0/components/nlink/inc/wlan_nlink_srv.h"
+)
+
+PATCHED=0
+for file in "${QCACLD_PATHS[@]}"; do
+    if [ -f "$file" ]; then
+        # Check if already patched
+        if grep -q "wlan_nl80211hdr_put" "$file"; then
+            echo "Already patched: $file"
+        else
+            # Rename nl80211hdr_put to wlan_nl80211hdr_put
+            sed -i 's/\bnl80211hdr_put\b/wlan_nl80211hdr_put/g' "$file"
+            echo "Patched: $file"
+            PATCHED=1
+        fi
+    fi
+done
+
+if [ $PATCHED -eq 1 ]; then
+    echo "nl80211hdr_put conflict resolved successfully"
+else
+    echo "Note: QCACLD driver files not found or already patched"
+fi
+
+echo ""
+echo "All kernel patches completed"
